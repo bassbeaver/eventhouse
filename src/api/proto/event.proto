@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package eventhouse.grpc.event;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "eventhouse/api/compiled/event";
+
+message Event {
+    string eventId = 1;
+    string eventType = 2;
+    string entityType = 3;
+    string entityId = 4;
+    google.protobuf.Timestamp recorded = 5;
+    string payload = 6;
+}
+
+message PushRequest {
+    string idempotencyKey = 1;
+    string eventType = 2;
+    string entityType = 3;
+    string entityId = 4;
+    string payload = 5;
+}
+
+message GetRequest {
+    string eventId = 1;
+}
+
+message EntityStreamRequest {
+    message Filter {
+        string eventIdFrom = 1;
+    }
+
+    string entityType = 1;
+    string entityId = 2;
+    Filter filter = 3;
+}
+
+message GlobalStreamRequest {
+    string eventIdFrom = 1;
+    repeated string entityType = 2;
+    repeated string eventType = 3;
+}
+
+service API {
+    rpc Push (PushRequest) returns (Event) {}
+    rpc Get (GetRequest) returns (Event) {}
+    rpc EntityStream (EntityStreamRequest) returns (stream Event) {}
+    rpc GlobalStream (GlobalStreamRequest) returns (stream Event) {}
+}

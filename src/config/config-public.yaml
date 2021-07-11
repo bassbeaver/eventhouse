@@ -1,0 +1,7 @@
+config:
+  port: 750
+
+  event_repository.max_entities_in_batch: 100
+  event_repository.batch_lifetime_ms: 50
+
+  logs.path: "/app/logs/logs.json"
