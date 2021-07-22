@@ -94,7 +94,9 @@ func (cr *clickhouseRepository) EntityStream(
 	filterFromEventId uint64,
 	loggerObj *logopher.Logger,
 ) (chan *Event, error) {
-	eventsChan := make(chan *Event)
+	// Buffered channel used to avoid case when stream reader is very slow and repository loaded all events from DB and pushed it to chan.
+	// We want to load events with same pace as they are read.
+	eventsChan := make(chan *Event, streamChanBufferSize)
 
 	go cr.performStreamRead(
 		func(lastEventId uint64) (*sql.Rows, error) {
@@ -113,7 +115,7 @@ func (cr *clickhouseRepository) GlobalStream(
 	filterEventType []string,
 	loggerObj *logopher.Logger,
 ) (chan *Event, error) {
-	eventsChan := make(chan *Event)
+	eventsChan := make(chan *Event, streamChanBufferSize)
 
 	go cr.performStreamRead(
 		func(lastEventId uint64) (*sql.Rows, error) {

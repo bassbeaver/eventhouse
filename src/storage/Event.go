@@ -11,6 +11,7 @@ import (
 const (
 	EventRepositoryAlias = "EventRepository"
 	rowsPerLoop          = "10"
+	streamChanBufferSize = 15 // 1.5 * rowsPerLoop
 )
 
 type Event struct {
