@@ -4,7 +4,8 @@ set -e
 
 if [[ "prod" != $SERVICE_ENV ]]
 then
-    go version
+    echo "go version: $(go version)"
+    echo "protoc version: $(protoc --version)"
 
     echo "Starting application compilation"
     /bin/bash /scripts/compile.sh

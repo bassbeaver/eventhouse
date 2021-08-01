@@ -6,6 +6,7 @@ clickhouse client -n <<-EOSQL
 
   CREATE TABLE IF NOT EXISTS eventhouse.events (
       EventId UInt64,
+      PreviousEventId UInt64,
       EventType String,
       IdempotencyKey String,
       EntityType String,

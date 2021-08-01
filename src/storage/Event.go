@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"github.com/bassbeaver/logopher"
@@ -15,19 +16,20 @@ const (
 )
 
 type Event struct {
-	EventId    uint64
-	EventType  string
-	EntityType string
-	EntityId   string
-	Recorded   time.Time
-	Payload    string
+	EventId         uint64
+	EventType       string
+	EntityType      string
+	EntityId        string
+	Recorded        time.Time
+	Payload         string
+	PreviousEventId uint64
 }
 
 type EventRepository interface {
-	Save(eventType string, idempotencyKey string, entityType string, entityId string, payload string) (*Event, error)
+	Save(eventType string, idempotencyKey string, entityType string, entityId string, payload string, ctx context.Context) (*Event, error)
 	Get(eventId uint64) (*Event, error)
-	EntityStream(entityType, entityId string, filterFromEventId uint64, loggerObj *logopher.Logger) (chan *Event, error)
-	GlobalStream(filterFromEventId uint64, filterEntityType, filterEventType []string, loggerObj *logopher.Logger) (chan *Event, error)
+	EntityStream(entityType, entityId string, filterFromEventId uint64, includeFromEvent bool, loggerObj *logopher.Logger, ctx context.Context) (chan *Event, error)
+	GlobalStream(filterFromEventId uint64, includeFromEvent bool, filterEntityType, filterEventType []string, loggerObj *logopher.Logger, ctx context.Context) (chan *Event, error)
 }
 
 func generateNewEventId() (uint64, error) {

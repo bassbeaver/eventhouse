@@ -1,7 +1,11 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
+	opentracingBridge "github.com/bassbeaver/eventhouse/service/opentracing"
+	"github.com/opentracing/opentracing-go"
 	"time"
 )
 
@@ -16,6 +20,7 @@ func (bcr *batchSavingClickhouseRepository) Save(
 	entityType string,
 	entityId string,
 	payload string,
+	ctx context.Context,
 ) (*Event, error) {
 	newEventId, newEventIdError := generateNewEventId()
 	if nil != newEventIdError {
@@ -33,6 +38,17 @@ func (bcr *batchSavingClickhouseRepository) Save(
 
 	saveResultChannel := make(chan error)
 
+	if nil != ctx {
+		if parentSpan := opentracing.SpanFromContext(ctx); nil != parentSpan {
+			repoSaveSpan := bcr.opentracingBridge.Tracer().StartSpan(
+				"event_repo__save",
+				opentracing.ChildOf(parentSpan.Context()),
+				opentracing.Tag{Key: "EventId", Value: fmt.Sprintf("%d", newEvent.EventId)},
+			)
+			defer repoSaveSpan.Finish()
+		}
+	}
+
 	bcr.batchManagerObj.Append(newBatchEntity(newEvent, idempotencyKey, saveResultChannel))
 
 	if saveError := <-saveResultChannel; nil != saveError {
@@ -42,9 +58,14 @@ func (bcr *batchSavingClickhouseRepository) Save(
 	return newEvent, nil
 }
 
-func NewBatchSavingClickhouseRepository(maxEntitiesInBatch int, batchLifetimeMs int, dbConnect *sql.DB) EventRepository {
+func NewBatchSavingClickhouseRepository(
+	maxEntitiesInBatch int,
+	batchLifetimeMs int,
+	dbConnect *sql.DB,
+	opentracingBridge *opentracingBridge.Bridge,
+) EventRepository {
 	return &batchSavingClickhouseRepository{
-		clickhouseRepository: NewClickhouseEventRepository(dbConnect).(*clickhouseRepository),
+		clickhouseRepository: NewClickhouseEventRepository(dbConnect, opentracingBridge).(*clickhouseRepository),
 		batchManagerObj:      newBatchManager(maxEntitiesInBatch, time.Duration(batchLifetimeMs)*time.Millisecond, dbConnect),
 	}
 }

@@ -1,14 +1,18 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	opentracingBridge "github.com/bassbeaver/eventhouse/service/opentracing"
 	"github.com/bassbeaver/logopher"
+	"github.com/opentracing/opentracing-go"
 	"time"
 )
 
 type clickhouseRepository struct {
-	dbConnect *sql.DB
+	dbConnect         *sql.DB
+	opentracingBridge *opentracingBridge.Bridge
 }
 
 func (cr *clickhouseRepository) Save(
@@ -17,6 +21,7 @@ func (cr *clickhouseRepository) Save(
 	entityType string,
 	entityId string,
 	payload string,
+	ctx context.Context,
 ) (*Event, error) {
 	newEventId, newEventIdError := generateNewEventId()
 	if nil != newEventIdError {
@@ -32,20 +37,44 @@ func (cr *clickhouseRepository) Save(
 		Payload:    payload,
 	}
 
+	if nil != ctx {
+		if parentSpan := opentracing.SpanFromContext(ctx); nil != parentSpan {
+			repoSaveSpan := cr.opentracingBridge.Tracer().StartSpan(
+				"event_repo__save",
+				opentracing.ChildOf(parentSpan.Context()),
+				opentracing.Tag{Key: "EventId", Value: newEvent.EventId},
+			)
+			defer repoSaveSpan.Finish()
+		}
+	}
+
 	tx, txError := cr.dbConnect.Begin()
 	if nil != txError {
 		return nil, errors.New("Failed to create Clickhouse transaction: " + txError.Error())
 	}
 
+	// NOTICE:
+	// In select statement subquery have to be at first place, because database/sql package has a bug and
+	// do not recognize prepared statement placeholder in SELECT statement if it is located just after SELECT keyword
 	stmt, prepareErr := tx.Prepare(
-		`INSERT INTO events (EventId, EventType, IdempotencyKey, EntityType, EntityId, Recorded, Payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"INSERT INTO events (PreviousEventId, EventId, EventType, IdempotencyKey, EntityType, EntityId, Recorded, Payload) " +
+			"SELECT " +
+			"(SELECT IF(0 < MAX(EventId), MAX(EventId), NULL) FROM events WHERE EntityType=? AND EntityId=?) as PreviousEventId, " +
+			"? as EventId, " +
+			"? as EventType, " +
+			"? as IdempotencyKey, " +
+			"? as EntityType, " +
+			"? as EntityId, " +
+			"? as Recorded, " +
+			"? as Payload",
 	)
 	if nil != prepareErr {
 		return nil, errors.New("Failed to prepare insert statement: " + prepareErr.Error())
 	}
 
 	_, stmtExecErr := stmt.Exec(
+		newEvent.EntityType,
+		newEvent.EntityId,
 		newEvent.EventId,
 		newEvent.EventType,
 		idempotencyKey,
@@ -68,7 +97,7 @@ func (cr *clickhouseRepository) Save(
 
 func (cr *clickhouseRepository) Get(eventId uint64) (*Event, error) {
 	rows, queryErr := cr.dbConnect.Query(
-		"SELECT EventId, EventType, EntityType, EntityId, Recorded, Payload FROM events WHERE EventId = ? LIMIT 1",
+		"SELECT EventId, PreviousEventId, EventType, EntityType, EntityId, Recorded, Payload FROM events WHERE EventId = ? LIMIT 1",
 		eventId,
 	)
 	if nil != queryErr {
@@ -80,7 +109,7 @@ func (cr *clickhouseRepository) Get(eventId uint64) (*Event, error) {
 	}
 
 	event := &Event{}
-	scanErr := rows.Scan(&event.EventId, &event.EventType, &event.EntityType, &event.EntityId, &event.Recorded, &event.Payload)
+	scanErr := rows.Scan(&event.EventId, &event.PreviousEventId, &event.EventType, &event.EntityType, &event.EntityId, &event.Recorded, &event.Payload)
 	if nil != scanErr {
 		return nil, errors.New("Failed to scan query results: " + scanErr.Error())
 	}
@@ -92,7 +121,9 @@ func (cr *clickhouseRepository) EntityStream(
 	entityType string,
 	entityId string,
 	filterFromEventId uint64,
+	includeFromEvent bool,
 	loggerObj *logopher.Logger,
+	ctx context.Context,
 ) (chan *Event, error) {
 	// Buffered channel used to avoid case when stream reader is very slow and repository loaded all events from DB and pushed it to chan.
 	// We want to load events with same pace as they are read.
@@ -100,10 +131,11 @@ func (cr *clickhouseRepository) EntityStream(
 
 	go cr.performStreamRead(
 		func(lastEventId uint64) (*sql.Rows, error) {
-			return cr.performEntityStreamBatchQuery(entityType, entityId, filterFromEventId, lastEventId)
+			return cr.performEntityStreamBatchQuery(entityType, entityId, filterFromEventId, includeFromEvent, lastEventId)
 		},
 		eventsChan,
 		loggerObj,
+		ctx,
 	)
 
 	return eventsChan, nil
@@ -111,18 +143,21 @@ func (cr *clickhouseRepository) EntityStream(
 
 func (cr *clickhouseRepository) GlobalStream(
 	filterFromEventId uint64,
+	includeFromEvent bool,
 	filterEntityType []string,
 	filterEventType []string,
 	loggerObj *logopher.Logger,
+	ctx context.Context,
 ) (chan *Event, error) {
 	eventsChan := make(chan *Event, streamChanBufferSize)
 
 	go cr.performStreamRead(
 		func(lastEventId uint64) (*sql.Rows, error) {
-			return cr.performGlobalStreamBatchQuery(filterFromEventId, filterEntityType, filterEventType, lastEventId)
+			return cr.performGlobalStreamBatchQuery(filterFromEventId, includeFromEvent, filterEntityType, filterEventType, lastEventId)
 		},
 		eventsChan,
 		loggerObj,
+		ctx,
 	)
 
 	return eventsChan, nil
@@ -132,12 +167,31 @@ func (cr *clickhouseRepository) performStreamRead(
 	batchQueryPerformer func(filterFromEventId uint64) (*sql.Rows, error),
 	eventsChan chan *Event,
 	loggerObj *logopher.Logger,
+	ctx context.Context,
 ) {
 	var lastEventId uint64
 	var rows *sql.Rows
 	queryNextBatch := true
 
 	for queryNextBatch {
+		var querySpan opentracing.Span
+		querySpanIsOpened := false
+		closeQuerySpan := func() {
+			if nil != querySpan && querySpanIsOpened {
+				querySpan.Finish()
+				querySpanIsOpened = false
+			}
+		}
+		if nil != ctx {
+			if parentSpan := opentracing.SpanFromContext(ctx); nil != parentSpan {
+				querySpan = cr.opentracingBridge.Tracer().StartSpan(
+					"repository__entity_stream_batch_query",
+					opentracing.ChildOf(parentSpan.Context()),
+				)
+				querySpanIsOpened = true
+			}
+		}
+
 		var rowsError error
 		rows, rowsError = batchQueryPerformer(lastEventId)
 		if nil != rowsError {
@@ -151,10 +205,12 @@ func (cr *clickhouseRepository) performStreamRead(
 		queryNextBatch = false
 
 		for rows.Next() {
+			closeQuerySpan()
+
 			queryNextBatch = true
 
 			event := &Event{}
-			scanErr := rows.Scan(&event.EventId, &event.EventType, &event.EntityType, &event.EntityId, &event.Recorded, &event.Payload)
+			scanErr := rows.Scan(&event.EventId, &event.PreviousEventId, &event.EventType, &event.EntityType, &event.EntityId, &event.Recorded, &event.Payload)
 			if nil != scanErr {
 				if nil != loggerObj {
 					loggerObj.Critical("Failed to scan Event from DB response", &logopher.MessageContext{"error": scanErr.Error()})
@@ -185,10 +241,11 @@ func (cr *clickhouseRepository) performEntityStreamBatchQuery(
 	entityType,
 	entityId string,
 	filterFromEventId uint64,
+	includeFromEvent bool,
 	lastEventId uint64,
 ) (*sql.Rows, error) {
 	sqlText :=
-		`SELECT EventId, EventType, EntityType, EntityId, Recorded, Payload FROM events
+		`SELECT EventId, PreviousEventId, EventType, EntityType, EntityId, Recorded, Payload FROM events
 		WHERE EntityType = ? AND EntityId = ? `
 	sqlParams := []interface{}{entityType, entityId}
 
@@ -198,7 +255,11 @@ func (cr *clickhouseRepository) performEntityStreamBatchQuery(
 	}
 
 	if 0 != filterFromEventId {
-		sqlText += " AND EventId >= ? "
+		if includeFromEvent {
+			sqlText += " AND EventId >= ? "
+		} else {
+			sqlText += " AND EventId > ? "
+		}
 		sqlParams = append(sqlParams, filterFromEventId)
 	}
 
@@ -214,11 +275,12 @@ func (cr *clickhouseRepository) performEntityStreamBatchQuery(
 
 func (cr *clickhouseRepository) performGlobalStreamBatchQuery(
 	filterFromEventId uint64,
+	includeFromEvent bool,
 	filterEntityType []string,
 	filterEventType []string,
 	lastEventId uint64,
 ) (*sql.Rows, error) {
-	sqlText := "SELECT EventId, EventType, EntityType, EntityId, Recorded, Payload FROM events"
+	sqlText := "SELECT EventId, PreviousEventId, EventType, EntityType, EntityId, Recorded, Payload FROM events"
 	whereText := ""
 	sqlParams := make([]interface{}, 0)
 
@@ -238,7 +300,11 @@ func (cr *clickhouseRepository) performGlobalStreamBatchQuery(
 
 	if 0 != filterFromEventId {
 		appendWhereOrAndToSqlText()
-		whereText += " EventId >= ? "
+		if includeFromEvent {
+			whereText += " EventId >= ? "
+		} else {
+			whereText += " EventId > ? "
+		}
 		sqlParams = append(sqlParams, filterFromEventId)
 	}
 
@@ -264,6 +330,9 @@ func (cr *clickhouseRepository) performGlobalStreamBatchQuery(
 	return rows, nil
 }
 
-func NewClickhouseEventRepository(dbConnect *sql.DB) EventRepository {
-	return &clickhouseRepository{dbConnect: dbConnect}
+func NewClickhouseEventRepository(dbConnect *sql.DB, opentracingBridge *opentracingBridge.Bridge) EventRepository {
+	return &clickhouseRepository{
+		dbConnect:         dbConnect,
+		opentracingBridge: opentracingBridge,
+	}
 }

@@ -6,6 +6,7 @@ import (
 	apiEvent "github.com/bassbeaver/eventhouse/api/compiled/event"
 	"github.com/bassbeaver/eventhouse/service/auth"
 	"github.com/bassbeaver/eventhouse/service/logger"
+	"github.com/bassbeaver/eventhouse/service/opentracing"
 	"github.com/bassbeaver/eventhouse/service/recovery"
 	"github.com/bassbeaver/eventhouse/service/request_id_setter"
 	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
@@ -42,6 +43,7 @@ func (s *GrpcServer) Serve() {
 func NewGrpcServer(
 	port int,
 	recoveryService *recovery.RecoveryService,
+	opentracingBridge *opentracing.Bridge,
 	requestIdISetter *request_id_setter.RequestIdSetter,
 	requestContextLoggerSetter *logger.RequestContextLoggerSetter,
 	authService *auth.AuthService,
@@ -54,6 +56,7 @@ func NewGrpcServer(
 				grpcMiddlewareRecovery.UnaryServerInterceptor(
 					grpcMiddlewareRecovery.WithRecoveryHandlerContext(recoveryService.Recover),
 				),
+				opentracingBridge.Intercept,
 				requestIdISetter.Intercept,
 				requestContextLoggerSetter.Intercept,
 				// Main panic interceptor. Set up after requestIdISetter and requestContextLoggerSetter to make that services available during recovery process
@@ -69,6 +72,7 @@ func NewGrpcServer(
 				grpcMiddlewareRecovery.StreamServerInterceptor(
 					grpcMiddlewareRecovery.WithRecoveryHandlerContext(recoveryService.Recover),
 				),
+				opentracingBridge.InterceptStream,
 				requestIdISetter.InterceptStream,
 				requestContextLoggerSetter.InterceptStream,
 				// Main panic interceptor. Set up after requestIdISetter and requestContextLoggerSetter to make that services available during recovery process

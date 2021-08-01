@@ -14,8 +14,7 @@ const (
 	metadataRequestIdKey        = "x-request-id"
 )
 
-type RequestIdSetter struct {
-}
+type RequestIdSetter struct{}
 
 func (i *RequestIdSetter) Intercept(
 	contextObj context.Context,

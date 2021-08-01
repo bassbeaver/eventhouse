@@ -7,7 +7,6 @@ services:
     container_name: eventhouse-app
     volumes:
       - ../src:/app/src
-      - ../load-testing:/app/load-testing
       - ../docker:/app/docker
       - ./images/app/scripts:/scripts
       - ./volumes/gopath/pkg:/go/pkg # Local go mod cache
@@ -48,8 +47,74 @@ services:
       - ../.:/app
       - ./volumes/gopath/pkg:/go/pkg
 
+  jaegger:
+    image: jaegertracing/all-in-one:latest
+    container_name: eventhouse-jaeger
+    networks:
+      eventhouse:
+        ipv4_address: 192.168.66.30
+
+#  provision-php:
+#    build:
+#      context: .
+#      dockerfile: ./images/provision-php/Dockerfile
+#    image: bassbeaver/eventhouse-provision-php:latest
+#    container_name: eventhouse-provision-php
+#    volumes:
+#      - ../.:/app
+
+  projector-go:
+    image: bassbeaver/eventhouse:latest
+    container_name: eventhouse-projector-go
+    volumes:
+      - ../src:/app/src
+      - ../load-testing:/app/load-testing
+      - ../projector/go:/app/projector/go
+      - ../docker:/app/docker
+      - ./images/projector-go/scripts:/scripts
+      - ./volumes/gopath/pkg:/go/pkg # Local go mod cache
+      - ./volumes/logs/app:/app/logs
+    env_file:
+      - projector-go.env
+    depends_on:
+      - app
+    networks:
+      eventhouse:
+        ipv4_address: 192.168.66.11
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - apparmor=unconfined
+
+  projector-php:
+    build:
+      context: ../.
+      dockerfile: ./docker/images/php/Dockerfile
+    image: bassbeaver/eventhouse-php:latest
+    container_name: eventhouse-php
+    volumes:
+      - ../projector/php:/app
+      - ../src/api/proto:/api-proto
+    networks:
+      - eventhouse
+
+  mysql:
+    image: mysql:5.7
+    container_name: eventhouse-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pwd
+    volumes:
+      - ./images/mysql:/docker-entrypoint-initdb.d
+      - mysql-data:/var/lib/mysql
+    networks:
+      eventhouse:
+        ipv4_address: 192.168.66.21
+
 volumes:
-  clickhouse-data: {}
+  clickhouse-data:
+    name: eventhouse-clickhouse
+  mysql-data:
+    name: eventhouse-mysql
 
 networks:
   eventhouse:

@@ -1,15 +1,11 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"github.com/bassbeaver/eventhouse/load-testing/api/compiled/event"
 	"github.com/bojand/ghz/printer"
 	"github.com/bojand/ghz/runner"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
-	"io"
 	"math/rand"
 	"os"
 	"strings"
@@ -22,8 +18,7 @@ var apiClientCredentials = []string{
 	"Y2xpZW50MjpzZWNyZXQy", // client2:secret2
 }
 
-var entityTypes = []string{"EntityType1", "EntityType2", "EntityType3", "EntityType4", "EntityType5"}
-var createdEntities = NewSelfCleaningConcurrentSlice(500)
+var subscriptionRegistry = NewSubscriptionRegistry()
 
 func main() {
 	var target string
@@ -38,7 +33,7 @@ func main() {
 
 	target = *targetFlag
 	if "" == target {
-		target = "localhost:750"
+		target = "app:750"
 	}
 
 	pathToProto := *pathToProtoFlag
@@ -61,13 +56,13 @@ func main() {
 
 	// To run stream reading test without parallel writing - comment out "readEntitiesFromGlobal(target)" line and "time.Sleep(1 * time.Minute)" line
 	//readEntitiesFromGlobal(target)
-	wg.Add(1)
-	go func() {
-		//time.Sleep(1 * time.Minute) // While testing parallel writing and reading - wait a while before reading in order to write routine to create some events
-		fmt.Println(time.Now().Format(time.RFC3339) + " stream reading started")
-		runs[1] = runEntityStreamRunner(target, pathToProto)
-		wg.Done()
-	}()
+	//wg.Add(1)
+	//go func() {
+	//	//time.Sleep(1 * time.Minute) // While testing parallel writing and reading - wait a while before reading in order to write routine to create some events
+	//	fmt.Println(time.Now().Format(time.RFC3339) + " stream reading started")
+	//	runs[1] = runEntityStreamRunner(target, pathToProto)
+	//	wg.Done()
+	//}()
 
 	wg.Wait()
 
@@ -117,55 +112,55 @@ func printReport(runs []*RunAct) {
 	}
 }
 
-func readEntitiesFromGlobal(target string) {
-	conn, err := grpc.Dial(
-		target,
-		grpc.WithInsecure(),
-		grpc.WithPerRPCCredentials(&ClientAuthCredentials{}),
-	)
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		closeError := conn.Close()
-		if nil != closeError {
-			fmt.Printf("gRPC connection close error: %s", closeError.Error())
-		}
-	}()
-
-	apiClient := event.NewAPIClient(conn)
-	stream, streamError := apiClient.GlobalStream(context.Background(), &event.GlobalStreamRequest{})
-	if nil != streamError {
-		panic(streamError)
-	}
-
-	var readEvents int
-	readEntities := make(map[string]bool)
-	for {
-		eventObj, err := stream.Recv()
-		if err == io.EOF {
-			break
-		} else if nil != err {
-			panic("error reading events stream: " + err.Error())
-		}
-
-		readEvents++
-
-		entityKey := eventObj.GetEntityType() + eventObj.GetEntityId()
-		if _, isRead := readEntities[entityKey]; isRead {
-			continue
-		}
-
-		createdEntities.Append(
-			&Entity{
-				EntityType:    eventObj.GetEntityType(),
-				EntityId:      eventObj.GetEntityId(),
-				EventsCounter: NewMutexCounter(),
-			},
-		)
-
-		readEntities[entityKey] = true
-	}
-
-	fmt.Printf("Read %d events. Created %d entities \n", readEvents, createdEntities.Len())
-}
+//func readEntitiesFromGlobal(target string) {
+//	conn, err := grpc.Dial(
+//		target,
+//		grpc.WithInsecure(),
+//		grpc.WithPerRPCCredentials(&ClientAuthCredentials{}),
+//	)
+//	if err != nil {
+//		panic(err)
+//	}
+//	defer func() {
+//		closeError := conn.Close()
+//		if nil != closeError {
+//			fmt.Printf("gRPC connection close error: %s", closeError.Error())
+//		}
+//	}()
+//
+//	apiClient := event.NewAPIClient(conn)
+//	stream, streamError := apiClient.GlobalStream(context.Background(), &event.GlobalStreamRequest{})
+//	if nil != streamError {
+//		panic(streamError)
+//	}
+//
+//	var readEvents int
+//	readEntities := make(map[string]bool)
+//	for {
+//		eventObj, err := stream.Recv()
+//		if err == io.EOF {
+//			break
+//		} else if nil != err {
+//			panic("error reading events stream: " + err.Error())
+//		}
+//
+//		readEvents++
+//
+//		entityKey := eventObj.GetEntityType() + eventObj.GetEntityId()
+//		if _, isRead := readEntities[entityKey]; isRead {
+//			continue
+//		}
+//
+//		createdEntities.Append(
+//			&Entity{
+//				EntityType:    eventObj.GetEntityType(),
+//				EntityId:      eventObj.GetEntityId(),
+//				EventsCounter: NewMutexCounter(),
+//			},
+//		)
+//
+//		readEntities[entityKey] = true
+//	}
+//
+//	fmt.Printf("Read %d events. Created %d entities \n", readEvents, createdEntities.Len())
+//}

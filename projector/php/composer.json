@@ -1,0 +1,28 @@
+{
+    "name": "bassbeaver/eventhouse-php-example",
+    "type": "project",
+    "license": "Apache 2.0",
+    "authors": [
+        {
+            "name": "Bobrovskyi Yurii",
+            "email": "beaver605@gmail.com"
+        }
+    ],
+    "require": {
+        "google/protobuf": "^3.17",
+        "grpc/grpc": "^1.39"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": {
+            "*": "dist"
+        },
+        "sort-packages": true
+    },
+    "autoload": {
+        "psr-4": {
+            "Eventhouse\\": "api/Eventhouse",
+            "GPBMetadata\\": "api/GPBMetadata"
+        }
+    }
+}

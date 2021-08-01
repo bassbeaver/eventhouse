@@ -13,6 +13,7 @@ message Event {
     string entityId = 4;
     google.protobuf.Timestamp recorded = 5;
     string payload = 6;
+    string previousEventId = 7;
 }
 
 message PushRequest {
@@ -43,9 +44,21 @@ message GlobalStreamRequest {
     repeated string eventType = 3;
 }
 
+message SubscribeGlobalStreamRequest {
+    string eventIdFrom = 1;
+    repeated string entityType = 2;
+    repeated string eventType = 3;
+}
+
+message EventStreamQuantum {
+    Event event = 1;
+    map<string, string> meta = 2; // Can not use gRPC metadata format (map[string][]string) because protobuf not supports repeated in maps
+}
+
 service API {
     rpc Push (PushRequest) returns (Event) {}
     rpc Get (GetRequest) returns (Event) {}
-    rpc EntityStream (EntityStreamRequest) returns (stream Event) {}
-    rpc GlobalStream (GlobalStreamRequest) returns (stream Event) {}
+    rpc EntityStream (EntityStreamRequest) returns (stream EventStreamQuantum) {}
+    rpc GlobalStream (GlobalStreamRequest) returns (stream EventStreamQuantum) {}
+    rpc SubscribeGlobalStream (SubscribeGlobalStreamRequest) returns (stream EventStreamQuantum) {}
 }

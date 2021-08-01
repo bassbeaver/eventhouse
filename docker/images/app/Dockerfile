@@ -2,21 +2,25 @@
 FROM golang:1.16-alpine3.13 AS compiler
 
 ARG SERVICE_ENV="dev"
-ARG GO_MOD_CACHE_PATH
 
 ENV CGO_ENABLED=0 \
-    SERVICE_ENV=${SERVICE_ENV}
+    SERVICE_ENV=${SERVICE_ENV} \
+    VOLUME_GOPATH="/app/src/docker/volumes/gopath"
 
 RUN apk update && apk upgrade && \
     apk add git bash && \
     go install github.com/go-delve/delve/cmd/dlv@latest && \
     apk add protobuf && \
-    go get -u github.com/golang/protobuf/protoc-gen-go
+    go get -u github.com/golang/protobuf/protoc-gen-go && \
+    # Removing $GOPATH cache to be able to use cache from $VOLUME_GOPATH (we do not know how to overlay them, so just remove cache created from delve and protoc installation) \
+    # Also, installation of delve and protoc have to be in basic image in case of good enterprise architecture
+    rm -R ${GOPATH}/pkg/mod && \
+    echo "go version: $(go version)" && \
+    echo "protoc version: $(protoc --version)"
 
 COPY src /app/src
-COPY load-testing /app/load-testing
 COPY docker/images/app /app/src/docker/images/app
-COPY docker/volumes/gopath /app/src/docker/volumes/gopath
+COPY docker/volumes/gopath $VOLUME_GOPATH
 
     # Creating entrypoint folder
 RUN mkdir -p /scripts && \

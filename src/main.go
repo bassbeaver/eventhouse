@@ -8,6 +8,7 @@ import (
 	"github.com/bassbeaver/eventhouse/service/clickhouse"
 	"github.com/bassbeaver/eventhouse/service/grpc"
 	"github.com/bassbeaver/eventhouse/service/logger"
+	"github.com/bassbeaver/eventhouse/service/opentracing"
 	"github.com/bassbeaver/eventhouse/service/recovery"
 	"github.com/bassbeaver/eventhouse/service/request_id_setter"
 	"github.com/bassbeaver/eventhouse/storage"
@@ -145,6 +146,7 @@ func registerServicesToContainer(container *gioc.Container) {
 				"#event_repository.max_entities_in_batch",
 				"#event_repository.batch_lifetime_ms",
 				"@" + clickhouse.ClickhouseConnectServiceAlias,
+				"@" + opentracing.OpentracingBridgeServiceAlias,
 			},
 		},
 		true,
@@ -153,8 +155,11 @@ func registerServicesToContainer(container *gioc.Container) {
 	container.RegisterServiceFactoryByAlias(
 		controller.EventControllerServiceAlias,
 		gioc.Factory{
-			Create:    controller.NewEventController,
-			Arguments: []string{"@" + storage.EventRepositoryAlias},
+			Create: controller.NewEventController,
+			Arguments: []string{
+				"@" + storage.EventRepositoryAlias,
+				"@" + opentracing.OpentracingBridgeServiceAlias,
+			},
 		},
 		true,
 	)
@@ -198,8 +203,25 @@ func registerServicesToContainer(container *gioc.Container) {
 	container.RegisterServiceFactoryByAlias(
 		auth.AuthServiceAlias,
 		gioc.Factory{
-			Create:    auth.NewAuthService,
-			Arguments: []string{"@" + clickhouse.ClickhouseConnectServiceAlias},
+			Create: auth.NewAuthService,
+			Arguments: []string{
+				"@" + clickhouse.ClickhouseConnectServiceAlias,
+				"@" + opentracing.OpentracingBridgeServiceAlias,
+			},
+		},
+		true,
+	)
+
+	container.RegisterServiceFactoryByAlias(
+		opentracing.OpentracingBridgeServiceAlias,
+		gioc.Factory{
+			Create: opentracing.NewBridge,
+			Arguments: []string{
+				"#jaegger.host",
+				"#jaegger.port",
+				"#jaegger.service_name",
+				"@" + logger.LoggerFactoryServiceAlias,
+			},
 		},
 		true,
 	)
@@ -211,6 +233,7 @@ func registerServicesToContainer(container *gioc.Container) {
 			Arguments: []string{
 				"#port",
 				"@" + recovery.RecoveryServiceAlias,
+				"@" + opentracing.OpentracingBridgeServiceAlias,
 				"@" + request_id_setter.RequestIdSetterServiceAlias,
 				"@" + logger.RequestContextLoggerSetterServiceAlias,
 				"@" + auth.AuthServiceAlias,

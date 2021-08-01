@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	loggerService "github.com/bassbeaver/eventhouse/service/logger"
+	opentracingBridge "github.com/bassbeaver/eventhouse/service/opentracing"
 	"github.com/bassbeaver/logopher"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -24,11 +26,19 @@ type apiClient struct {
 }
 
 type AuthService struct {
-	dbConnect    *sql.DB
-	knownClients map[string]*apiClient
+	dbConnect         *sql.DB
+	opentracingBridge *opentracingBridge.Bridge
+	knownClients      map[string]*apiClient
 }
 
 func (s *AuthService) Auth(ctx context.Context) (context.Context, error) {
+	if opentracingRootSpan := opentracing.SpanFromContext(ctx); nil != opentracingRootSpan {
+		childSpan := s.opentracingBridge.Tracer().StartSpan(
+			"interceptor__auth",
+			opentracing.ChildOf(opentracingRootSpan.Context()),
+		)
+		defer childSpan.Finish()
+	}
 	logger := loggerService.GetLoggerFromContext(ctx)
 
 	metadataObj, metadataIsOk := metadata.FromIncomingContext(ctx)
@@ -93,8 +103,8 @@ func (s *AuthService) loadKnownClients() {
 
 // --------
 
-func NewAuthService(dbConnect *sql.DB) *AuthService {
-	s := &AuthService{dbConnect: dbConnect}
+func NewAuthService(dbConnect *sql.DB, opentracingBridge *opentracingBridge.Bridge) *AuthService {
+	s := &AuthService{dbConnect: dbConnect, opentracingBridge: opentracingBridge}
 	s.loadKnownClients()
 
 	return s

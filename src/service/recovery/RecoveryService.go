@@ -34,6 +34,7 @@ func (rs *RecoveryService) Recover(contextObj context.Context, recoveredError in
 
 func NewRecoveryService(loggerFactory *loggerService.LoggerFactory) *RecoveryService {
 	loggerObj, _ := loggerFactory.CreateLogger(1)
+
 	return &RecoveryService{
 		loggerObj: loggerObj,
 	}
