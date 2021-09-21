@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	apiEvent "github.com/bassbeaver/eventhouse/api/compiled/event"
+	"github.com/bassbeaver/eventhouse/lib/sorted"
 	loggerService "github.com/bassbeaver/eventhouse/service/logger"
 	opentracingBridge "github.com/bassbeaver/eventhouse/service/opentracing"
 	"github.com/bassbeaver/eventhouse/storage"
@@ -17,6 +18,10 @@ import (
 
 const (
 	EventControllerServiceAlias = "EventController"
+	subscriptionPollPeriod      = 1000 * time.Millisecond
+	slidingWindowMaxLen         = 50
+	slidingWindowBigCutLen      = 10
+	slidingWindowDrainLen       = 5
 )
 
 type EventController struct {
@@ -152,6 +157,7 @@ func (ec *EventController) GlobalStream(requestObj *apiEvent.GlobalStreamRequest
 	eventsChan, chanError := ec.eventRepo.GlobalStream(
 		fromEventId,
 		true,
+		nil,
 		requestObj.GetEntityType(),
 		requestObj.GetEventType(),
 		loggerObj,
@@ -210,6 +216,7 @@ func (ec *EventController) SubscribeGlobalStream(requestObj *apiEvent.SubscribeG
 	eventsChan, chanError := ec.eventRepo.GlobalStream(
 		fromEventId,
 		true,
+		nil,
 		requestObj.GetEntityType(),
 		requestObj.GetEventType(),
 		loggerObj,
@@ -234,45 +241,8 @@ func (ec *EventController) SubscribeGlobalStream(requestObj *apiEvent.SubscribeG
 
 	// Start listening to new events
 
-	ticker := time.NewTicker(1000 * time.Millisecond)
 	done := make(chan error)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				newEventsChan, newEventsChanError := ec.eventRepo.GlobalStream(
-					fromEventId,
-					false,
-					requestObj.GetEntityType(),
-					requestObj.GetEventType(),
-					loggerObj,
-					streamServer.Context(),
-				)
-				if nil != newEventsChanError {
-					loggerObj.Critical("Failed create new Events stream channel", &logopher.MessageContext{"error": newEventsChanError.Error()})
-
-					done <- grpcStatus.Error(grpcCodes.Internal, "server error")
-
-					return
-				}
-
-				for evt := range newEventsChan {
-					sendError := ec.sendEventToSubscription(evt, streamServer, loggerObj)
-					if nil != sendError {
-						loggerObj.Critical("Failed send new Event to stream", &logopher.MessageContext{"error": sendError.Error()})
-
-						done <- grpcStatus.Error(grpcCodes.Internal, "server error")
-
-						return
-					}
-
-					fromEventId = evt.EventId
-				}
-			case <-streamServer.Context().Done():
-				done <- nil
-			}
-		}
-	}()
+	go ec.eventsOverwatch(done, fromEventId, requestObj.GetEntityType(), requestObj.GetEventType(), streamServer)
 
 	listenError := <-done
 	if nil == listenError {
@@ -305,6 +275,75 @@ func (ec *EventController) sendEventToSubscription(
 	}
 
 	return streamServer.Send(&apiEvent.EventStreamQuantum{Event: dbToApi(evt), Meta: quantumMeta})
+}
+
+func (ec *EventController) eventsOverwatch(
+	done chan error,
+	fromEventId uint64,
+	entityType []string,
+	eventType []string,
+	streamServer apiEvent.API_SubscribeGlobalStreamServer,
+) {
+	ticker := time.NewTicker(subscriptionPollPeriod)
+	slidingWindow := make([]uint64, 0) // Sliding Window to perform overwatch of events appended "to the middle" of already sent batch
+	loggerObj := loggerService.GetLoggerFromContext(streamServer.Context())
+
+	for {
+		select {
+		case <-ticker.C:
+			newEventsChan, newEventsChanError := ec.eventRepo.GlobalStream(
+				fromEventId,
+				false,
+				slidingWindow,
+				entityType,
+				eventType,
+				loggerObj,
+				streamServer.Context(),
+			)
+			if nil != newEventsChanError {
+				loggerObj.Critical("Failed create new Events stream channel", &logopher.MessageContext{"error": newEventsChanError.Error()})
+
+				done <- grpcStatus.Error(grpcCodes.Internal, "server error")
+
+				return
+			}
+
+			slidingWindowWasAppended := false
+			for evt := range newEventsChan {
+				sendError := ec.sendEventToSubscription(evt, streamServer, loggerObj)
+				if nil != sendError {
+					loggerObj.Critical("Failed send new Event to stream", &logopher.MessageContext{"error": sendError.Error()})
+
+					done <- grpcStatus.Error(grpcCodes.Internal, "server error")
+
+					return
+				}
+
+				// If Sliding Window is full - cut part old records
+				if slidingWindowMaxLen <= len(slidingWindow) {
+					slidingWindow = slidingWindow[slidingWindowBigCutLen:]
+				}
+				slidingWindow = sorted.Uint64Insert(slidingWindow, evt.EventId)
+				slidingWindowWasAppended = true
+			}
+
+			// Drain Sliding Window to prevent continuous loops with same window if no new events added during long time
+			if !slidingWindowWasAppended {
+				if slidingWindowDrainLen < len(slidingWindow) {
+					slidingWindow = slidingWindow[slidingWindowDrainLen:]
+				} else if 0 < len(slidingWindow) {
+					fromEventId = slidingWindow[len(slidingWindow)-1]
+					slidingWindow = []uint64{}
+				}
+			}
+
+			if len(slidingWindow) > 0 {
+				fromEventId = slidingWindow[0]
+			}
+		case <-streamServer.Context().Done():
+			done <- nil
+		}
+	}
 }
 
 // --------

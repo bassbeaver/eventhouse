@@ -33,7 +33,6 @@ func (cr *clickhouseRepository) Save(
 		EventType:  eventType,
 		EntityType: entityType,
 		EntityId:   entityId,
-		Recorded:   time.Now(),
 		Payload:    payload,
 	}
 
@@ -72,6 +71,8 @@ func (cr *clickhouseRepository) Save(
 		return nil, errors.New("Failed to prepare insert statement: " + prepareErr.Error())
 	}
 
+	newEvent.Recorded = time.Now()
+
 	_, stmtExecErr := stmt.Exec(
 		newEvent.EntityType,
 		newEvent.EntityId,
@@ -80,7 +81,7 @@ func (cr *clickhouseRepository) Save(
 		idempotencyKey,
 		newEvent.EntityType,
 		newEvent.EntityId,
-		newEvent.Recorded,
+		newEvent.Recorded.Format("2006-01-02 15:04:05.999999999"),
 		newEvent.Payload,
 	)
 	if nil != stmtExecErr {
@@ -144,6 +145,7 @@ func (cr *clickhouseRepository) EntityStream(
 func (cr *clickhouseRepository) GlobalStream(
 	filterFromEventId uint64,
 	includeFromEvent bool,
+	excludeEventIds []uint64,
 	filterEntityType []string,
 	filterEventType []string,
 	loggerObj *logopher.Logger,
@@ -153,7 +155,7 @@ func (cr *clickhouseRepository) GlobalStream(
 
 	go cr.performStreamRead(
 		func(lastEventId uint64) (*sql.Rows, error) {
-			return cr.performGlobalStreamBatchQuery(filterFromEventId, includeFromEvent, filterEntityType, filterEventType, lastEventId)
+			return cr.performGlobalStreamBatchQuery(filterFromEventId, includeFromEvent, excludeEventIds, filterEntityType, filterEventType, lastEventId)
 		},
 		eventsChan,
 		loggerObj,
@@ -276,6 +278,7 @@ func (cr *clickhouseRepository) performEntityStreamBatchQuery(
 func (cr *clickhouseRepository) performGlobalStreamBatchQuery(
 	filterFromEventId uint64,
 	includeFromEvent bool,
+	excludeEventIds []uint64,
 	filterEntityType []string,
 	filterEventType []string,
 	lastEventId uint64,
@@ -306,6 +309,12 @@ func (cr *clickhouseRepository) performGlobalStreamBatchQuery(
 			whereText += " EventId > ? "
 		}
 		sqlParams = append(sqlParams, filterFromEventId)
+	}
+
+	if nil != excludeEventIds && len(excludeEventIds) > 0 {
+		appendWhereOrAndToSqlText()
+		whereText += " EventId NOT IN (?) "
+		sqlParams = append(sqlParams, excludeEventIds)
 	}
 
 	if len(filterEntityType) > 0 {

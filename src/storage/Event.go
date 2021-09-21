@@ -29,7 +29,7 @@ type EventRepository interface {
 	Save(eventType string, idempotencyKey string, entityType string, entityId string, payload string, ctx context.Context) (*Event, error)
 	Get(eventId uint64) (*Event, error)
 	EntityStream(entityType, entityId string, filterFromEventId uint64, includeFromEvent bool, loggerObj *logopher.Logger, ctx context.Context) (chan *Event, error)
-	GlobalStream(filterFromEventId uint64, includeFromEvent bool, filterEntityType, filterEventType []string, loggerObj *logopher.Logger, ctx context.Context) (chan *Event, error)
+	GlobalStream(filterFromEventId uint64, includeFromEvent bool, excludeEventIds []uint64, filterEntityType, filterEventType []string, loggerObj *logopher.Logger, ctx context.Context) (chan *Event, error)
 }
 
 func generateNewEventId() (uint64, error) {

@@ -33,8 +33,8 @@ type EventReducer struct {
 func (er *EventReducer) Reduce(eventObj *apiEvent.Event) {
 	reducer, reducerIsOk := er.reducers[eventObj.GetEntityType()][eventObj.GetEventType()]
 	if !reducerIsOk {
-		fmt.Printf(
-			"No reducer for EntityType:%s EventType:%s EventId:%s\n",
+		writeLog(
+			"No reducer for EntityType:%s EventType:%s EventId:%s",
 			eventObj.GetEntityType(),
 			eventObj.GetEventType(),
 			eventObj.GetEventId(),
@@ -72,13 +72,13 @@ func (er *EventReducer) getEntityLastEventId(entityType string, entityId string)
 func (er *EventReducer) subscriptionCreatedReducer(eventObj *apiEvent.Event) {
 	lastEventId, lastEventIdError := er.getEntityLastEventId(eventObj.EntityType, eventObj.EntityId)
 	if nil != lastEventIdError {
-		fmt.Printf("Failed to reduce event %s, failed to get last event id. Error: %s. \n", eventObj.EventId, lastEventIdError.Error())
+		writeLog("Failed to reduce event %s, failed to get last event id. Error: %s.", eventObj.EventId, lastEventIdError.Error())
 
 		return
 	}
 
 	if "" != lastEventId {
-		fmt.Printf("Failed to reduce event %s. Subscription %s is already in DB. \n", eventObj.EventId, eventObj.EntityId)
+		writeLog("Failed to reduce event %s. Subscription %s is already in DB.", eventObj.EventId, eventObj.EntityId)
 
 		return
 	}
@@ -96,21 +96,21 @@ func (er *EventReducer) subscriptionCreatedReducer(eventObj *apiEvent.Event) {
 	}{}
 
 	if jsonError := json.Unmarshal([]byte(eventObj.GetPayload()), &payload); nil != jsonError {
-		fmt.Printf("Failed to reduce event %s. Failed to unmarshall payload, error: %s. \n", eventObj.EventId, jsonError.Error())
+		writeLog("Failed to reduce event %s. Failed to unmarshall payload, error: %s.", eventObj.EventId, jsonError.Error())
 
 		return
 	}
 
 	expired, expiredError := addPlanDuration(eventObj.GetRecorded().AsTime(), payload.Plan.Duration)
 	if nil != expiredError {
-		fmt.Printf("Failed to reduce event %s. Failed to calculate expiration, error: %s. \n", eventObj.EventId, expiredError)
+		writeLog("Failed to reduce event %s. Failed to calculate expiration, error: %s.", eventObj.EventId, expiredError)
 
 		return
 	}
 
 	tx, txError := er.db.BeginTx(context.Background(), nil)
 	if nil != txError {
-		fmt.Printf("Failed to reduce event %s. Failed to start new DB transaction, error: %s. \n", eventObj.EventId, txError.Error())
+		writeLog("Failed to reduce event %s. Failed to start new DB transaction, error: %s.", eventObj.EventId, txError.Error())
 
 		return
 	}
@@ -127,7 +127,7 @@ func (er *EventReducer) subscriptionCreatedReducer(eventObj *apiEvent.Event) {
 		eventObj.GetEventId(),
 	)
 	if nil != dbError {
-		fmt.Printf("Failed to reduce event %s. Failed to save new Subscription to DB, error: %s. \n", eventObj.EventId, dbError.Error())
+		writeLog("Failed to reduce event %s. Failed to save new Subscription to DB, error: %s.", eventObj.EventId, dbError.Error())
 		transactionRollbackAndLog(tx)
 
 		return
@@ -141,18 +141,20 @@ func (er *EventReducer) subscriptionCreatedReducer(eventObj *apiEvent.Event) {
 		payload.Transaction.Amount,
 	)
 	if nil != dbError {
-		fmt.Printf("Failed to reduce event %s. Failed to save new Transaction to DB, error: %s. \n", eventObj.EventId, dbError.Error())
+		writeLog("Failed to reduce event %s. Failed to save new Transaction to DB, error: %s.", eventObj.EventId, dbError.Error())
 		transactionRollbackAndLog(tx)
 
 		return
 	}
 
 	transactionCommitAndLog(tx)
+
+	writeLog("Reduced event %s.", eventObj.GetEventId())
 }
 
 func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 	if err := er.checkLastEventId(eventObj); nil != err {
-		fmt.Printf("Failed to reduce event %s, Error: %s. \n", eventObj.EventId, err.Error())
+		writeLog("Failed to reduce event %s, Error: %s.", eventObj.EventId, err.Error())
 
 		return
 	}
@@ -165,14 +167,14 @@ func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 	}{}
 
 	if jsonError := json.Unmarshal([]byte(eventObj.GetPayload()), &payload); nil != jsonError {
-		fmt.Printf("Failed to reduce event %s. Failed to unmarshall payload, error: %s. \n", eventObj.EventId, jsonError.Error())
+		writeLog("Failed to reduce event %s. Failed to unmarshall payload, error: %s.", eventObj.EventId, jsonError.Error())
 
 		return
 	}
 
 	tx, txError := er.db.BeginTx(context.Background(), nil)
 	if nil != txError {
-		fmt.Printf("Failed to reduce event %s. Failed to start new DB transaction, error: %s. \n", eventObj.EventId, txError.Error())
+		writeLog("Failed to reduce event %s. Failed to start new DB transaction, error: %s.", eventObj.EventId, txError.Error())
 
 		return
 	}
@@ -183,7 +185,7 @@ func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 		eventObj.GetEntityId(),
 	).Scan(&currentExpiredValue, &planDuration)
 	if nil != queryError {
-		fmt.Printf("Failed to reduce event %s. Failed to get current expiration, error: %s. \n", eventObj.EventId, queryError)
+		writeLog("Failed to reduce event %s. Failed to get current expiration, error: %s.", eventObj.EventId, queryError)
 		transactionRollbackAndLog(tx)
 
 		return
@@ -191,7 +193,7 @@ func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 
 	currentExpired, parseError := time.Parse("2006-01-02 15:04:05.999999", currentExpiredValue)
 	if nil != parseError {
-		fmt.Printf("Failed to reduce event %s. Failed to parse current expiration: %s, error: %s. \n", currentExpiredValue, eventObj.EventId, parseError)
+		writeLog("Failed to reduce event %s. Failed to parse current expiration: %s, error: %s.", currentExpiredValue, eventObj.EventId, parseError)
 		transactionRollbackAndLog(tx)
 
 		return
@@ -199,7 +201,7 @@ func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 
 	newExpired, expiredError := addPlanDuration(currentExpired, planDuration)
 	if nil != expiredError {
-		fmt.Printf("Failed to reduce event %s. Failed to calculate expiration, error: %s. \n", eventObj.EventId, expiredError)
+		writeLog("Failed to reduce event %s. Failed to calculate expiration, error: %s.", eventObj.EventId, expiredError)
 
 		return
 	}
@@ -211,7 +213,7 @@ func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 		eventObj.GetEntityId(),
 	)
 	if nil != dbError {
-		fmt.Printf("Failed to reduce event %s. Failed to update Subscription in DB, error: %s. \n", eventObj.EventId, dbError.Error())
+		writeLog("Failed to reduce event %s. Failed to update Subscription in DB, error: %s.", eventObj.EventId, dbError.Error())
 		transactionRollbackAndLog(tx)
 
 		return
@@ -225,18 +227,20 @@ func (er *EventReducer) subscriptionRenewedReducer(eventObj *apiEvent.Event) {
 		payload.Transaction.Amount,
 	)
 	if nil != dbError {
-		fmt.Printf("Failed to reduce event %s. Failed to save new Transaction to DB, error: %s. \n", eventObj.EventId, dbError.Error())
+		writeLog("Failed to reduce event %s. Failed to save new Transaction to DB, error: %s.", eventObj.EventId, dbError.Error())
 		transactionRollbackAndLog(tx)
 
 		return
 	}
 
 	transactionCommitAndLog(tx)
+
+	writeLog("Reduced event %s.", eventObj.GetEventId())
 }
 
 func (er *EventReducer) subscriptionCanceledReducer(eventObj *apiEvent.Event) {
 	if err := er.checkLastEventId(eventObj); nil != err {
-		fmt.Printf("Failed to reduce event %s, Error: %s. \n", eventObj.EventId, err.Error())
+		writeLog("Failed to reduce event %s, Error: %s.", eventObj.EventId, err.Error())
 
 		return
 	}
@@ -248,10 +252,12 @@ func (er *EventReducer) subscriptionCanceledReducer(eventObj *apiEvent.Event) {
 		eventObj.GetEntityId(),
 	)
 	if nil != dbError {
-		fmt.Printf("Failed to reduce event %s. Failed to cancel Subscription in DB, error: %s. \n", eventObj.EventId, dbError.Error())
+		writeLog("Failed to reduce event %s. Failed to cancel Subscription in DB, error: %s.", eventObj.EventId, dbError.Error())
 
 		return
 	}
+
+	writeLog("Reduced event %s.", eventObj.GetEventId())
 }
 
 func (er *EventReducer) checkLastEventId(eventObj *apiEvent.Event) error {
@@ -278,13 +284,13 @@ func (er *EventReducer) checkLastEventId(eventObj *apiEvent.Event) error {
 
 func transactionRollbackAndLog(tx *sql.Tx) {
 	if err := tx.Rollback(); nil != err {
-		fmt.Printf("Error during transaction rollback: %s. \n", err.Error())
+		writeLog("Error during transaction rollback: %s.", err.Error())
 	}
 }
 
 func transactionCommitAndLog(tx *sql.Tx) {
 	if err := tx.Commit(); nil != err {
-		fmt.Printf("Error during transaction commit: %s. \n", err.Error())
+		writeLog("Error during transaction commit: %s.", err.Error())
 	}
 }
 
@@ -320,6 +326,13 @@ func addPlanDuration(date time.Time, planDuration string) (*time.Time, error) {
 	}
 
 	return &newDate, nil
+}
+
+func writeLog(msg string, args ...interface{}) {
+	fmt.Printf(
+		"[%s] "+msg+"\n",
+		append([]interface{}{time.Now().Format("2006-01-02 15:04:05.999999999")}, args...)...,
+	)
 }
 
 func NewEventReducer(db *sql.DB) *EventReducer {

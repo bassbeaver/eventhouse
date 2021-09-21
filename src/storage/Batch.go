@@ -25,11 +25,10 @@ type batch struct {
 	maxEntities           int
 	maxLifeTime           time.Duration
 	batchEntitiesToInsert []*batchEntity
-	//saveResultChannels    []chan error
-	dbConnect      *sql.DB
-	appendChan     chan *batchEntity
-	closedChan     chan bool
-	lifetimeTicker *time.Ticker
+	dbConnect             *sql.DB
+	appendChan            chan *batchEntity
+	closedChan            chan bool
+	lifetimeTicker        *time.Ticker
 }
 
 func (b *batch) startAppendListener() {
@@ -44,7 +43,6 @@ func (b *batch) startAppendListener() {
 				}
 
 				b.entitiesCount++
-				//b.saveResultChannels = append(b.saveResultChannels, batchEntityObj.saveResultChannel)
 				b.batchEntitiesToInsert = append(b.batchEntitiesToInsert, batchEntityObj)
 
 				if b.entitiesCount >= b.maxEntities {
@@ -73,12 +71,10 @@ func (b *batch) performInsertAndSendResults() {
 
 	insertError := b.performInsert()
 	if nil != insertError {
-		//for _, saveResultChannel := range b.saveResultChannels {
 		for _, entityObj := range b.batchEntitiesToInsert {
 			entityObj.saveResultChannel <- insertError
 		}
 	} else {
-		//for _, saveResultChannel := range b.saveResultChannels {
 		for _, entityObj := range b.batchEntitiesToInsert {
 			entityObj.saveResultChannel <- nil
 		}
@@ -138,6 +134,8 @@ func (b *batch) performInsert() error {
 			continue
 		}
 
+		batchEntityObj.event.Recorded = time.Now()
+
 		_, stmtExecErr := stmt.Exec(
 			batchEntityObj.event.EntityType,
 			batchEntityObj.event.EntityId,
@@ -146,7 +144,7 @@ func (b *batch) performInsert() error {
 			batchEntityObj.idempotencyKey,
 			batchEntityObj.event.EntityType,
 			batchEntityObj.event.EntityId,
-			batchEntityObj.event.Recorded,
+			batchEntityObj.event.Recorded.Format("2006-01-02 15:04:05.999999999"),
 			batchEntityObj.event.Payload,
 		)
 		if nil != stmtExecErr {
@@ -202,10 +200,9 @@ func newBatch(
 		maxEntities:           maxEntities,
 		maxLifeTime:           maxLifeTime,
 		batchEntitiesToInsert: make([]*batchEntity, 0),
-		//saveResultChannels:    make([]chan error, 0),
-		dbConnect:  dbConnect,
-		appendChan: appendChan,
-		closedChan: make(chan bool),
+		dbConnect:             dbConnect,
+		appendChan:            appendChan,
+		closedChan:            make(chan bool),
 	}
 
 	b.startAppendListener()

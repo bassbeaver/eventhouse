@@ -32,7 +32,6 @@ func (bcr *batchSavingClickhouseRepository) Save(
 		EventType:  eventType,
 		EntityType: entityType,
 		EntityId:   entityId,
-		Recorded:   time.Now(),
 		Payload:    payload,
 	}
 

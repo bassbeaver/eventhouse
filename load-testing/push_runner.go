@@ -20,13 +20,13 @@ func runPushRunner(target, proto string) *RunAct {
 		runner.WithBinaryDataFunc(pushDataProvider),
 		runner.WithMetadataProvider(authMetadataProvider),
 		runner.WithInsecure(true),
-		runner.WithConcurrency(10),
-		runner.WithTotalRequests(2000),
+		runner.WithConcurrency(25),
+		runner.WithTotalRequests(6000),
 		runner.WithLoadSchedule(runner.ScheduleStep),
 		runner.WithLoadStart(10),
 		runner.WithLoadEnd(50),
 		runner.WithLoadStep(2),
-		runner.WithLoadStepDuration(10*time.Second),
+		runner.WithLoadStepDuration(4*time.Second),
 	)
 
 	return act
