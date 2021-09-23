@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 SERVICE=$1
-BUILD_IMAGE=$2
 
 if [[ -z $SERVICE ]]
 then
@@ -12,12 +11,6 @@ fi
 echo "Starting debug of ${SERVICE}"
 
 docker-compose stop app projector-go
-
-if [[ -n $BUILD_IMAGE ]]
-then
-  echo 'Building image'
-  docker build --build-arg SERVICE_ENV=debug --file images/app/Dockerfile --force-rm --tag bassbeaver/eventhouse:latest --target compiler ../. # paths are specified relative to the Makefile
-fi
 
 if [[ $SERVICE = "app" ]]
 then

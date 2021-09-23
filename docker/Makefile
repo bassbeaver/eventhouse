@@ -8,25 +8,14 @@ build:
 	./scripts/build-image.sh $(ARGS)
 
 
-
-.PHONY: build-run
-build-run:
-	./scripts/run.sh $(ARGS) 1
-
 .PHONY: run
 run:
 	./scripts/run.sh $(ARGS)
 
 
-
-.PHONY: build-debug
-build-debug:
-	./scripts/debug.sh $(ARGS) 1
-
 .PHONY: debug
 debug:
 	./scripts/debug.sh $(ARGS)
-
 
 
 .PHONY: stop
